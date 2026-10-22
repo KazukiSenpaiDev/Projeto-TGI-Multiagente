@@ -15,11 +15,19 @@ def mostrar_interface():
 
     if st.button("Gerar projeto", on_click=enviar_prompt, args=(prompt,)):
 
+        
         if st.session_state.prompt_enviado:
-            st.success("Prompt enviado com sucesso!")
-            st.write(st.session_state.prompt_enviado)
+            resposta = st.session_state.prompt_enviado
+
+            if "error" in resposta:
+                st.error(resposta["error"])
+            else:
+                st.success(resposta["message"])
+                st.write("Prompt recebido pela API:")
+                st.code(resposta["Prompt_recebido"])
         else:
             st.warning("Por favor, digite um prompt antes de enviar.")
+
 
 
 def enviar_prompt(p: str):
@@ -27,7 +35,7 @@ def enviar_prompt(p: str):
     if p.strip() == "":
         st.session_state.prompt_enviado = None
     else:
-        novo_prompt = receber_prompt(p)
-        st.session_state.prompt_enviado = novo_prompt
+        resposta = receber_prompt(p)
+        st.session_state.prompt_enviado = resposta
         st.session_state.prompt_text_area = ""
     
