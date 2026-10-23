@@ -9,12 +9,17 @@ def receber_prompt(prompt):
         resposta = requests.post(
             API_URL,
             json={"prompt": prompt},
-            timeout=10
+            timeout=120,
         )
 
         resposta.raise_for_status()
 
-        return resposta.json()
+        try:
+            return resposta.json()
+        except ValueError:
+            return {
+                "error": "A API retornou uma resposta inválida."
+            }
 
     except requests.exceptions.Timeout:
         return {"error": "A API demorou muito para responder."}
@@ -23,10 +28,11 @@ def receber_prompt(prompt):
         return {"error": "Não foi possível conectar à API."}
 
     except requests.exceptions.HTTPError:
-        return {"error": "A API retornou um erro ao processar o prompt."}
+        return {
+            "error": "A API retornou um erro ao processar o prompt."
+        }
 
     except requests.exceptions.RequestException:
-        return {"error": "Ocorreu um erro na comunicação com a API."}
-
-    except ValueError:
-        return {"error": "A API retornou uma resposta inválida."}
+        return {
+            "error": "Ocorreu um erro na comunicação com a API."
+        }
