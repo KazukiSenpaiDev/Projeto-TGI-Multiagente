@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from services.claude_service import gerar_codigo
 from services.project_storage import salvar_projeto
-
+from services.analysis_service import analisar_projeto
 
 app = FastAPI()
 
@@ -22,6 +22,8 @@ def gerar_projeto(dados: PromptRequest):
         codigo_gerado = gerar_codigo(dados.prompt)
 
         pasta_projeto = salvar_projeto(codigo_gerado, dados.prompt)
+
+        resultados_analise = analisar_projeto(str(pasta_projeto))
 
     except RuntimeError as erro:
         raise HTTPException(
@@ -45,6 +47,7 @@ def gerar_projeto(dados: PromptRequest):
         "message": "Projeto gerado e salvo com sucesso!",
         "Prompt_recebido": dados.prompt,
         "codigo_gerado": codigo_gerado,
-        "pasta_projeto": str(pasta_projeto)
+        "pasta_projeto": str(pasta_projeto),
+        "resultados_analise": resultados_analise
     }
 
