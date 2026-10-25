@@ -13,7 +13,7 @@ def gerar_codigo(prompt: str) -> dict:
     try:
         resposta = cliente.messages.create(
             model="claude-sonnet-5-5",
-            max_tokens=4096,
+            max_tokens=16384,
             messages=[
                 {
                     "role": "user",
@@ -36,6 +36,7 @@ def gerar_codigo(prompt: str) -> dict:
                 }
             ],
         )
+        
 
     except anthropic.AuthenticationError as erro:
         raise RuntimeError(
@@ -63,6 +64,12 @@ def gerar_codigo(prompt: str) -> dict:
             "A API do Claude retornou um erro ao processar a solicitação."
         ) from erro
 
+    if resposta.stop_reason == "max_tokens":
+        raise ValueError(
+        "A resposta do Claude atingiu o limite de tokens "
+        "e pode estar incompleta. Tente um projeto menor."
+    )
+
     textos = [
         bloco.text
         for bloco in resposta.content
@@ -73,6 +80,7 @@ def gerar_codigo(prompt: str) -> dict:
 
     try:
         projeto = json.loads(conteudo)
+
     except json.JSONDecodeError as erro:
         raise ValueError(
             "O Claude retornou uma resposta que não é um JSON válido."
