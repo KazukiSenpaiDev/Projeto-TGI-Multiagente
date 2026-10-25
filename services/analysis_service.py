@@ -1,7 +1,7 @@
 import subprocess
 import sys
 from pathlib import Path
-
+from services.ast_service import analisar_arquivo_ast
 
 def analisar_arquivo(caminho_arquivo: str) -> dict:
     caminho = Path(caminho_arquivo)
@@ -82,6 +82,10 @@ def analisar_projeto(pasta_projeto: str) -> dict:
         caminho_relativo = arquivo.relative_to(pasta).as_posix()
 
         resultados[caminho_relativo] = analisar_arquivo(
+            str(arquivo)
+        )
+
+        resultados[caminho_relativo]["ast"] = analisar_arquivo_ast(
             str(arquivo)
         )
 

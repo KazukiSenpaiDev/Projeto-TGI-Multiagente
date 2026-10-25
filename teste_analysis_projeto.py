@@ -30,12 +30,18 @@ with TemporaryDirectory() as diretorio:
     assert "utils/calculo.py" in resultados
     assert "README.md" not in resultados
 
+    
     for arquivo, analises in resultados.items():
         assert set(analises.keys()) == {
             "bandit",
             "radon",
             "pylint",
+            "ast",
         }
+
+    assert analises["ast"]["valido"] is True
+    assert analises["ast"]["erro"] is None
+
 
     print("Teste aprovado: arquivos Python analisados.")
     print("Arquivos encontrados:", list(resultados.keys()))
