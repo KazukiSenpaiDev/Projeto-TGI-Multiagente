@@ -81,15 +81,19 @@ def testar_falha_de_um_analisador():
             stderr="",
         )
 
+        
         with patch(
             "services.analysis_service.subprocess.run",
             side_effect=[
                 OSError("Falha simulada no Bandit"),
-                processo_sucesso,
-                processo_sucesso,
+                processo_sucesso,  # Radon CC
+                processo_sucesso,  # Radon MI
+                processo_sucesso,  # Pylint JSON
+                processo_sucesso,  # Pontuação do Pylint
             ],
         ):
             resultados = analisar_arquivo(str(arquivo))
+
 
     assert resultados["bandit"]["codigo_retorno"] is None
     assert "Falha simulada no Bandit" in resultados["bandit"]["erros"]
