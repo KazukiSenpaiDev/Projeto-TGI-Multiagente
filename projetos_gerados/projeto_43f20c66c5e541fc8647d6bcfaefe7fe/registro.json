@@ -1,0 +1,6 @@
+{
+    "id": "projeto_43f20c66c5e541fc8647d6bcfaefe7fe",
+    "prompt": "Crie um projeto Python para gerenciamento de notas de alunos com exatamente dois arquivos: main.py e notas.py. Em notas.py, crie as funções adicionar_nota, calcular_media, classificar_aluno e avaliar_expressao. A função adicionar_nota deve validar notas entre zero e dez usando condições aninhadas. A função calcular_media deve tratar listas vazias. A função classificar_aluno deve usar vários níveis de condições aninhadas para classificar médias como Aprovado, Recuperação ou Reprovado. A função avaliar_expressao deve usar eval para avaliar uma expressão textual, mas não deve ser executada. Não inclua docstrings nos módulos nem nas funções. Em main.py, inclua uma importação não utilizada de os e execute um exemplo simples de cálculo de média e classificação. Garanta que o código tenha sintaxe válida. Retorne somente um JSON válido contendo a chave arquivos, com uma lista de objetos que tenham as chaves nome e conteudo. Não inclua Markdown nem explicações fora do JSON.",
+    "data_hora": "2026-10-25T20:37:06.439279-03:00",
+    "pasta_projeto": "C:\\Users\\pedro\\OneDrive\\Documentos\\Faculdade\\Aplicação do projeto\\Projeto TGI\\projetos_gerados\\projeto_43f20c66c5e541fc8647d6bcfaefe7fe"
+}

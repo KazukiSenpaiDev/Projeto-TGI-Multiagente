@@ -17,12 +17,20 @@ def analisar_arquivo(caminho_arquivo: str) -> dict:
         )
 
     analisadores = {
-        "bandit": [sys.executable, "-m", "bandit", str(caminho)],
+        "bandit": [
+            sys.executable, "-m", "bandit",
+            "-f", "json", str(caminho)
+        ],
+
         "radon": [
             sys.executable, "-m", "radon", "cc",
             str(caminho), "-s"
         ],
-        "pylint": [sys.executable, "-m", "pylint", str(caminho)],
+
+        "pylint": [
+            sys.executable, "-m", "pylint",
+            "--output-format=json", str(caminho)
+        ],
     }
 
     resultados = {}
@@ -44,6 +52,76 @@ def analisar_arquivo(caminho_arquivo: str) -> dict:
                 "saida": processo.stdout,
                 "erros": processo.stderr,
             }
+
+            
+            if nome == "radon":
+                try:
+                    processo_manutenibilidade = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "radon",
+                            "mi",
+                            str(caminho),
+                            "-s",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=60,
+                        check=False,
+                    )
+
+                    resultados[nome]["saida_manutenibilidade"] = (
+                        processo_manutenibilidade.stdout
+                    )
+
+                    resultados[nome]["erros_manutenibilidade"] = (
+                        processo_manutenibilidade.stderr
+                    )
+
+                except subprocess.TimeoutExpired:
+                    resultados[nome]["saida_manutenibilidade"] = ""
+                    resultados[nome]["erros_manutenibilidade"] = (
+                        "O Radon MI excedeu o tempo limite de 60 segundos."
+                    )
+
+                except OSError as erro:
+                    resultados[nome]["saida_manutenibilidade"] = ""
+                    resultados[nome]["erros_manutenibilidade"] = (
+                        f"Não foi possível executar o Radon MI: {erro}"
+                    )
+
+
+            if nome == "pylint" and processo.returncode is not None:
+                try:
+                    processo_pontuacao = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pylint",
+                            "--score=y",
+                            caminho.stem,    
+                        ],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=60,
+                        check=False,
+                        cwd=str(caminho.resolve().parent),
+                    )
+
+                    resultados[nome]["saida_pontuacao"] = (
+                        processo_pontuacao.stdout
+                    )
+
+                except subprocess.TimeoutExpired:
+                    resultados[nome]["saida_pontuacao"] = ""
+
+                except OSError:
+                    resultados[nome]["saida_pontuacao"] = ""
 
         except subprocess.TimeoutExpired:
             resultados[nome] = {
