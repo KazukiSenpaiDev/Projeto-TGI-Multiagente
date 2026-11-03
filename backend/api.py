@@ -8,6 +8,7 @@ from services.claude_service import gerar_codigo
 from services.project_storage import salvar_projeto
 from services.analysis_service import analisar_projeto
 from services.normalization_service import normalizar_resultados_projeto
+from services.openai_service import auditar_projeto
 
 app = FastAPI()
 
@@ -28,6 +29,11 @@ def gerar_projeto(dados: PromptRequest):
 
         resultados_analise = normalizar_resultados_projeto(
             resultados_brutos
+        )
+
+        diagnostico = auditar_projeto(
+            codigo_gerado,
+            resultados_analise
         )
 
     except RuntimeError as erro:
@@ -53,6 +59,7 @@ def gerar_projeto(dados: PromptRequest):
         "Prompt_recebido": dados.prompt,
         "codigo_gerado": codigo_gerado,
         "pasta_projeto": str(pasta_projeto),
-        "resultados_analise": resultados_analise
+        "resultados_analise": resultados_analise,
+        "diagnostico": diagnostico
     }
 

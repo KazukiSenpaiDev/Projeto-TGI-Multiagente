@@ -20,11 +20,11 @@ def mostrar_interface():
             resposta = st.session_state.prompt_enviado
 
             
-            if "error" in resposta:
-                st.error(resposta["error"])
-
-            elif not isinstance(resposta, dict):
+            if not isinstance(resposta, dict):
                 st.error("A resposta recebida da API é inválida.")
+
+            elif "error" in resposta:
+                st.error(resposta["error"])
 
             elif "codigo_gerado" not in resposta:
                 st.error("A resposta da API não contém os arquivos gerados.")

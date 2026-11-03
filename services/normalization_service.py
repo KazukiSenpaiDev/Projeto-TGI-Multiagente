@@ -30,6 +30,7 @@ def _extrair_achados_bandit(saida: str) -> list:
             "tipo": "seguranca",
             "codigo": resultado.get("test_id"),
             "severidade": resultado.get("issue_severity"),
+            "confianca": resultado.get("issue_confidence"),
             "descricao": resultado.get("issue_text"),
             "localizacao": {
                 "linha": resultado.get("line_number"),
