@@ -1,3 +1,4 @@
 .venv/
 __pycache__/
 .env
+projetos_gerados/
