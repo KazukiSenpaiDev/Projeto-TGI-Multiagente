@@ -1,6 +1,13 @@
 
 import streamlit as st
-from services.prompt_service import receber_prompt
+from datetime import datetime
+
+from services.prompt_service import (
+    carregar_projeto_historico,
+    listar_projetos_historico,
+    receber_prompt,
+    registrar_decisao_historico
+)
 import html
 
 
@@ -1538,16 +1545,69 @@ def mostrar_diagnostico_completo(diagnostico):
 # DECISÃO HUMANA (HITL)
 # ============================================================
 
+def decisao_persistivel(resposta):
+    """Indica se a decisão pode ser gravada no histórico deste projeto."""
+    return (
+        isinstance(resposta, dict)
+        and isinstance(resposta.get("projeto_id"), str)
+        and resposta.get("historico_salvo") is not False
+        and isinstance(resposta.get("diagnostico"), dict)
+        and isinstance(resposta.get("resultados_analise"), dict)
+    )
+
+
+def aplicar_decisao(decisao):
+    """Registra a decisão (ou a remove, se for None).
+
+    Quando o projeto está no histórico, a decisão só muda na tela
+    se a API confirmar a gravação.
+    """
+    st.session_state.pop("confirmar_novo_projeto", None)
+    st.session_state.pop("erro_decisao", None)
+
+    resposta = st.session_state.get("prompt_enviado")
+
+    if decisao_persistivel(resposta):
+
+        retorno = registrar_decisao_historico(
+            resposta["projeto_id"],
+            decisao,
+            resposta.get("numero_versao")
+        )
+
+        if not isinstance(retorno, dict) or "error" in retorno:
+
+            mensagem = (
+                retorno.get("error")
+                if isinstance(retorno, dict)
+                else None
+            )
+
+            st.session_state.erro_decisao = (
+                "A decisão não foi salva no histórico: "
+                + (
+                    mensagem
+                    if isinstance(mensagem, str)
+                    else "erro desconhecido."
+                )
+            )
+
+            return
+
+    if decisao is None:
+        st.session_state.pop("decisao_hitl", None)
+    else:
+        st.session_state.decisao_hitl = decisao
+
+
 def registrar_decisao(decisao: str):
 
-    st.session_state.decisao_hitl = decisao
-    st.session_state.pop("confirmar_novo_projeto", None)
+    aplicar_decisao(decisao)
 
 
 def limpar_decisao():
 
-    st.session_state.pop("decisao_hitl", None)
-    st.session_state.pop("confirmar_novo_projeto", None)
+    aplicar_decisao(None)
 
 
 def pedir_confirmacao_novo_projeto():
@@ -1565,6 +1625,7 @@ def iniciar_novo_projeto():
     st.session_state.pop("prompt_enviado", None)
     st.session_state.pop("decisao_hitl", None)
     st.session_state.pop("confirmar_novo_projeto", None)
+    st.session_state.pop("erro_decisao", None)
 
 
 def mostrar_novo_projeto(decisao):
@@ -1573,12 +1634,27 @@ def mostrar_novo_projeto(decisao):
 
     if st.session_state.get("confirmar_novo_projeto"):
 
-        st.warning(
-            "O resultado atual sairá da tela. Os arquivos gerados continuam "
-            "salvos na pasta projetos_gerados, mas esta tela de resultados "
-            "não poderá ser recuperada até a fase do histórico. "
-            "Deseja continuar?"
+        resposta_atual = st.session_state.get("prompt_enviado")
+
+        historico_salvo = not (
+            isinstance(resposta_atual, dict)
+            and resposta_atual.get("historico_salvo") is False
         )
+
+        if historico_salvo:
+            st.warning(
+                "O resultado atual sairá da tela. Você poderá reabri-lo "
+                "depois, na lista de projetos anteriores. "
+                "Deseja continuar?"
+            )
+
+        else:
+            st.warning(
+                "O histórico deste projeto não foi gravado. Se você "
+                "continuar, esta tela de resultados não poderá ser reaberta "
+                "(os arquivos continuam na pasta projetos_gerados). "
+                "Deseja continuar?"
+            )
 
         col1, col2, _ = st.columns([1, 1, 3])
 
@@ -1613,7 +1689,7 @@ def mostrar_novo_projeto(decisao):
         )
 
 
-def mostrar_decisao_hitl(diagnostico):
+def mostrar_decisao_hitl(resposta):
 
     st.markdown(
         """
@@ -1627,23 +1703,45 @@ def mostrar_decisao_hitl(diagnostico):
         unsafe_allow_html=True
     )
 
+    diagnostico = (
+        resposta.get("diagnostico")
+        if isinstance(resposta, dict)
+        else None
+    )
+
     status = (
         diagnostico.get("status")
         if isinstance(diagnostico, dict)
         else None
     )
 
+    persistivel = decisao_persistivel(resposta)
+
     decisao = st.session_state.get("decisao_hitl")
 
+    erro = st.session_state.pop("erro_decisao", None)
+
+    if persistivel:
+        nota_persistencia = "Decisão registrada no histórico deste projeto."
+    else:
+        nota_persistencia = (
+            "Esta decisão vale apenas nesta tela: este projeto não possui "
+            "resultado completo salvo no histórico."
+        )
+
     with st.container(border=True):
+
+        if erro:
+            st.error(erro)
 
         if decisao == "aceito":
 
             st.success("Você aceitou o resultado deste projeto.")
 
             st.caption(
-                "Nenhum arquivo foi exportado e a decisão ainda não "
-                "é salva no histórico (funcionalidades de fases futuras)."
+                nota_persistencia
+                + " Nenhum arquivo foi exportado "
+                "(funcionalidade de fase futura)."
             )
 
             st.button(
@@ -1661,8 +1759,8 @@ def mostrar_decisao_hitl(diagnostico):
             )
 
             st.caption(
-                "Nenhuma nova geração foi iniciada e a decisão ainda "
-                "não é salva no histórico."
+                nota_persistencia
+                + " Nenhuma nova geração foi iniciada."
             )
 
             st.button(
@@ -1683,6 +1781,12 @@ def mostrar_decisao_hitl(diagnostico):
                 st.warning(
                     "A auditoria foi inconclusiva. "
                     "Revise as limitações do diagnóstico antes de decidir."
+                )
+
+            if not persistivel:
+                st.caption(
+                    "Este projeto não possui resultado completo no "
+                    "histórico: a decisão valerá apenas nesta tela."
                 )
 
             col1, col2, _ = st.columns([1, 1, 3])
@@ -1710,6 +1814,206 @@ def mostrar_decisao_hitl(diagnostico):
 
 
 # ============================================================
+# HISTÓRICO DE PROJETOS
+# ============================================================
+
+LIMITE_HISTORICO = 10
+
+
+def formatar_data_hora(valor):
+
+    if not isinstance(valor, str):
+        return "Data indisponível"
+
+    try:
+        return datetime.fromisoformat(valor).strftime("%d/%m/%Y %H:%M")
+    except ValueError:
+        return "Data indisponível"
+
+
+def criar_selo(texto, cor):
+
+    return (
+        '<span style="display: inline-block; padding: 3px 10px; '
+        f'border-radius: 20px; border: 1px solid {html.escape(cor)}; '
+        f'color: {html.escape(cor)}; font-size: 11px; font-weight: 700; '
+        f'letter-spacing: 0.5px;">{html.escape(texto.upper())}</span>'
+    )
+
+
+def obter_selo_historico(projeto: dict):
+
+    estado = projeto.get("estado")
+
+    if estado == "completa":
+        texto, cor = STATUS_DIAGNOSTICO.get(
+            projeto.get("status_auditoria"),
+            ("Sem status", "#64748B")
+        )
+
+    elif estado == "incompleta":
+        texto, cor = "Incompleto", "#EAB308"
+
+    elif estado == "formato_antigo":
+        texto, cor = "Formato antigo", "#64748B"
+
+    else:
+        texto, cor = "Indisponível", "#64748B"
+
+    return criar_selo(texto, cor)
+
+
+def abrir_projeto_historico(projeto_id: str):
+
+    resposta = carregar_projeto_historico(projeto_id)
+
+    if not isinstance(resposta, dict) or "error" in resposta:
+
+        mensagem = (
+            resposta.get("error")
+            if isinstance(resposta, dict)
+            else None
+        )
+
+        st.session_state.erro_historico = (
+            mensagem
+            if isinstance(mensagem, str)
+            else "Não foi possível abrir o projeto."
+        )
+
+        return
+
+    st.session_state.prompt_enviado = resposta
+    st.session_state.pop("confirmar_novo_projeto", None)
+    st.session_state.pop("erro_decisao", None)
+
+    decisao_salva = resposta.get("decisao")
+
+    if decisao_salva in ("aceito", "refinamento"):
+        st.session_state.decisao_hitl = decisao_salva
+    else:
+        st.session_state.pop("decisao_hitl", None)
+
+
+def mostrar_historico():
+
+    st.divider()
+
+    st.markdown(
+        """
+        <div class="section-number">HISTÓRICO</div>
+        <div class="section-heading">Projetos anteriores</div>
+        <div class="section-description">
+            Reabra um projeto gerado anteriormente, com os arquivos,
+            os resultados das ferramentas e o diagnóstico.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    erro = st.session_state.pop("erro_historico", None)
+
+    if erro:
+        st.error(erro)
+
+    resposta = listar_projetos_historico()
+
+    if not isinstance(resposta, dict) or "error" in resposta:
+
+        mensagem = (
+            resposta.get("error")
+            if isinstance(resposta, dict)
+            else None
+        )
+
+        st.warning(
+            mensagem
+            if isinstance(mensagem, str)
+            else "Não foi possível carregar o histórico."
+        )
+
+        return
+
+    projetos = [
+        projeto
+        for projeto in (resposta.get("projetos") or [])
+        if isinstance(projeto, dict) and isinstance(projeto.get("id"), str)
+    ]
+
+    if not projetos:
+        st.info("Nenhum projeto salvo ainda.")
+        return
+
+    if len(projetos) > LIMITE_HISTORICO:
+        st.caption(
+            f"Mostrando os {LIMITE_HISTORICO} mais recentes "
+            f"de {len(projetos)} projetos."
+        )
+
+    for projeto in projetos[:LIMITE_HISTORICO]:
+
+        estado = projeto.get("estado")
+        pode_abrir = estado in ("completa", "incompleta")
+
+        descricao = projeto.get("prompt_resumo") or "(sem descrição)"
+
+        total_versoes = projeto.get("total_versoes")
+
+        texto_versoes = (
+            f"{total_versoes} versão"
+            if total_versoes == 1
+            else f"{total_versoes} versões"
+            if isinstance(total_versoes, int)
+            else ""
+        )
+
+        detalhes = formatar_data_hora(projeto.get("data_hora"))
+
+        if texto_versoes:
+            detalhes += f" · {texto_versoes}"
+
+        with st.container(border=True):
+
+            col_info, col_selo, col_acao = st.columns(
+                [5, 2, 1],
+                vertical_alignment="center"
+            )
+
+            with col_info:
+
+                st.html(
+                    f"""
+                    <div style="color: #E5E7EB; font-size: 14px;">
+                        {html.escape(descricao)}
+                    </div>
+                    <div style="color: #64748B; font-size: 11px;
+                                margin-top: 4px;">
+                        {html.escape(detalhes)}
+                    </div>
+                    """
+                )
+
+                aviso = projeto.get("aviso")
+
+                if isinstance(aviso, str) and aviso.strip():
+                    st.caption(aviso)
+
+            with col_selo:
+                st.html(obter_selo_historico(projeto))
+
+            with col_acao:
+
+                st.button(
+                    "Abrir",
+                    key=f"abrir_{projeto['id']}",
+                    on_click=abrir_projeto_historico,
+                    args=(projeto["id"],),
+                    disabled=not pode_abrir,
+                    use_container_width=True
+                )
+
+
+# ============================================================
 # GERAÇÃO DO PROJETO
 # ============================================================
 
@@ -1733,8 +2037,9 @@ def mostrar_area_geracao():
     if projeto_gerado_valido(resposta_atual):
 
         st.caption(
-            "Projeto gerado. Para iniciar outro, use o botão "
-            "**Novo projeto** na seção 06 / DECISÃO, ao final da página."
+            "Projeto em exibição. Para iniciar outro ou abrir um projeto "
+            "anterior, use o botão **Novo projeto** na seção 06 / DECISÃO, "
+            "ao final da página."
         )
 
         return resposta_atual
@@ -1840,6 +2145,11 @@ def mostrar_resultado(resposta):
         resposta.get("message", "Projeto gerado com sucesso!")
     )
 
+    aviso = resposta.get("aviso")
+
+    if isinstance(aviso, str) and aviso.strip():
+        st.warning(aviso)
+
     with st.expander("Visualizar descrição enviada"):
 
         st.code(
@@ -1855,7 +2165,7 @@ def mostrar_resultado(resposta):
 
     mostrar_diagnostico_completo(resposta.get("diagnostico"))
 
-    mostrar_decisao_hitl(resposta.get("diagnostico"))
+    mostrar_decisao_hitl(resposta)
 
 
 # ============================================================
@@ -1875,3 +2185,7 @@ def mostrar_interface():
         st.divider()
 
         mostrar_resultado(resposta)
+
+    if not projeto_gerado_valido(resposta):
+
+        mostrar_historico()
