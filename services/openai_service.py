@@ -1,6 +1,7 @@
 import json
 from openai import OpenAI, OpenAIError
 from dotenv import load_dotenv
+from services.auditoria_entrada import montar_entrada_auditoria
 
 load_dotenv()
 
@@ -766,22 +767,8 @@ essa decisão em nome dele.
 
 
 
-def auditar_projeto(codigo_gerado: dict, resultados_analise: dict) -> dict:
-    """
-    Envia o código gerado e os resultados das análises
-    para o GPT-5 mini e retorna o diagnóstico estruturado.
-    """
-
-    entrada_auditoria = {
-        "codigo_gerado": codigo_gerado,
-        "resultados_analise": resultados_analise
-    }
-
-    dados_json = json.dumps(
-        entrada_auditoria,
-        ensure_ascii=False,
-        indent=2
-    )
+def _executar_auditoria(dados_json: str) -> dict:
+    """Envia os dados (já em texto JSON) ao GPT-5 mini e valida o retorno."""
 
     try:
         cliente = OpenAI()
@@ -841,3 +828,20 @@ def auditar_projeto(codigo_gerado: dict, resultados_analise: dict) -> dict:
         raise RuntimeError(
             "A resposta da OpenAI não contém um JSON válido."
         ) from erro
+
+
+def auditar_projeto(codigo_gerado: dict, resultados_analise: dict) -> dict:
+    """
+    Envia o código gerado e os resultados das análises
+    para o GPT-5 mini e retorna o diagnóstico estruturado.
+
+    O auditor recebe uma cópia limpa dos resultados: sem as saídas
+    brutas das ferramentas e sem caminhos da máquina local.
+    """
+
+    dados_json = montar_entrada_auditoria(
+        codigo_gerado,
+        resultados_analise
+    )
+
+    return _executar_auditoria(dados_json)

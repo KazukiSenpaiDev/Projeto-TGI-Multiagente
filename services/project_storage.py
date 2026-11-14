@@ -38,13 +38,16 @@ def _gravar_json(caminho: Path, dados: dict) -> None:
     temporario.replace(caminho)
 
 
-def salvar_projeto(projeto: dict, prompt: str) -> Path:
-    arquivos = projeto.get("arquivos")
+def _validar_arquivos(projeto: dict) -> list:
+    """Valida os arquivos de um projeto gerado.
+
+    Devolve uma lista de (caminho_relativo, conteudo) ou levanta
+    ValueError. Nada é gravado no disco aqui.
+    """
+    arquivos = projeto.get("arquivos") if isinstance(projeto, dict) else None
 
     if not isinstance(arquivos, list) or not arquivos:
         raise ValueError("O projeto não contém uma lista válida de arquivos.")
-
-    pasta_projeto = PASTA_PROJETOS / f"projeto_{uuid.uuid4().hex}"
 
     arquivos_validados = []
     caminhos_vistos = set()
@@ -109,16 +112,29 @@ def salvar_projeto(projeto: dict, prompt: str) -> Path:
                     f"Conflito de estrutura entre arquivos: {caminho_pai} e {caminho}"
                 )
 
+    return arquivos_validados
+
+
+def _gravar_arquivos(pasta_arquivos: Path, arquivos_validados: list) -> None:
+    """Grava os arquivos já validados em uma pasta nova."""
+    pasta_arquivos.mkdir(parents=True, exist_ok=False)
+
+    for caminho_relativo, conteudo in arquivos_validados:
+        destino = pasta_arquivos / caminho_relativo
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(conteudo, encoding="utf-8")
+
+
+def salvar_projeto(projeto: dict, prompt: str) -> Path:
+    arquivos_validados = _validar_arquivos(projeto)
+
+    pasta_projeto = PASTA_PROJETOS / f"projeto_{uuid.uuid4().hex}"
+
     pasta_projeto.mkdir(parents=True, exist_ok=False)
 
     try:
         pasta_arquivos = obter_pasta_arquivos(pasta_projeto, 1)
-        pasta_arquivos.mkdir(parents=True, exist_ok=False)
-
-        for caminho_relativo, conteudo in arquivos_validados:
-            destino = pasta_arquivos / caminho_relativo
-            destino.parent.mkdir(parents=True, exist_ok=True)
-            destino.write_text(conteudo, encoding="utf-8")
+        _gravar_arquivos(pasta_arquivos, arquivos_validados)
 
         data_hora = datetime.now().astimezone().isoformat()
 
@@ -146,6 +162,116 @@ def salvar_projeto(projeto: dict, prompt: str) -> Path:
         raise
 
     return pasta_projeto
+
+
+def salvar_nova_versao(
+    pasta_projeto: Path,
+    projeto: dict,
+    versao_origem: int,
+    instrucoes: str = None,
+) -> int:
+    """Cria a versão seguinte de um projeto existente e devolve seu número.
+
+    Os arquivos são gravados em versoes/vN/arquivos/ e a versão é
+    acrescentada ao registro, ligada à versão de origem. O resultado
+    da análise é gravado depois, com gravar_resultado().
+
+    Levanta:
+      ValueError         - arquivos, registro ou versão de origem inválidos.
+      FileNotFoundError  - projeto inexistente.
+      OSError            - falha ao gravar (a versão incompleta é removida
+                           e o registro não é alterado).
+    """
+    pasta_projeto = Path(pasta_projeto)
+
+    if instrucoes is not None and not isinstance(instrucoes, str):
+        raise ValueError("As instruções de refinamento são inválidas.")
+
+    arquivos_validados = _validar_arquivos(projeto)
+
+    if (
+        not pasta_projeto.is_dir()
+        or pasta_projeto.resolve().parent != PASTA_PROJETOS.resolve()
+    ):
+        raise FileNotFoundError("Projeto não encontrado.")
+
+    caminho_registro = pasta_projeto / "registro.json"
+
+    try:
+        registro = json.loads(caminho_registro.read_text(encoding="utf-8"))
+
+    except ValueError as erro:
+        raise ValueError(
+            "Não foi possível ler o registro do projeto."
+        ) from erro
+
+    if (
+        not isinstance(registro, dict)
+        or registro.get("formato_versao") != FORMATO_VERSAO
+        or not isinstance(registro.get("versoes"), list)
+    ):
+        raise ValueError("O registro do projeto tem um formato inesperado.")
+
+    versoes = [
+        versao
+        for versao in registro["versoes"]
+        if (
+            isinstance(versao, dict)
+            and isinstance(versao.get("numero"), int)
+            and not isinstance(versao.get("numero"), bool)
+        )
+    ]
+
+    if not versoes:
+        raise ValueError("O registro do projeto não possui versões.")
+
+    origem = next(
+        (versao for versao in versoes if versao["numero"] == versao_origem),
+        None
+    )
+
+    if origem is None:
+        raise ValueError(
+            f"A versão de origem {versao_origem} não existe neste projeto."
+        )
+
+    if origem.get("estado") != "completa":
+        raise ValueError(
+            "A versão de origem não possui resultado completo."
+        )
+
+    numero_novo = max(versao["numero"] for versao in versoes) + 1
+
+    pasta_arquivos = obter_pasta_arquivos(pasta_projeto, numero_novo)
+    pasta_versao = pasta_arquivos.parent
+
+    try:
+        _gravar_arquivos(pasta_arquivos, arquivos_validados)
+
+        instrucoes_limpas = (
+            instrucoes.strip()
+            if isinstance(instrucoes, str) and instrucoes.strip()
+            else None
+        )
+
+        registro["versoes"].append({
+            "numero": numero_novo,
+            "data_hora": datetime.now().astimezone().isoformat(),
+            "estado": "arquivos_salvos",
+            "origem": versao_origem,
+            "instrucoes": instrucoes_limpas,
+            "pasta_arquivos": pasta_arquivos
+            .relative_to(pasta_projeto)
+            .as_posix()
+        })
+
+        _gravar_json(caminho_registro, registro)
+
+    except OSError:
+        shutil.rmtree(pasta_versao, ignore_errors=True)
+        raise
+
+    return numero_novo
 
 
 # ============================================================

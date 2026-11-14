@@ -1,11 +1,13 @@
 
 import streamlit as st
+import difflib
 from datetime import datetime
 
 from services.prompt_service import (
     carregar_projeto_historico,
     listar_projetos_historico,
     receber_prompt,
+    refinar_projeto_historico,
     registrar_decisao_historico
 )
 import html
@@ -693,7 +695,7 @@ def mostrar_graficos(diagnostico: dict):
             st.vega_lite_chart(
                 dados_severidade,
                 grafico_rosca,
-                use_container_width=True
+                width="stretch"
             )
 
         else:
@@ -760,7 +762,7 @@ def mostrar_graficos(diagnostico: dict):
             st.vega_lite_chart(
                 dados_origem,
                 grafico_barras,
-                use_container_width=True
+                width="stretch"
             )
 
         else:
@@ -1556,6 +1558,13 @@ def decisao_persistivel(resposta):
     )
 
 
+def limpar_estado_refinamento():
+    """Remove o estado temporário do fluxo de refinamento."""
+    st.session_state.pop("confirmar_refinamento", None)
+    st.session_state.pop("refinamento_texto", None)
+    st.session_state.pop("erro_refinamento", None)
+
+
 def aplicar_decisao(decisao):
     """Registra a decisão (ou a remove, se for None).
 
@@ -1563,6 +1572,8 @@ def aplicar_decisao(decisao):
     se a API confirmar a gravação.
     """
     st.session_state.pop("confirmar_novo_projeto", None)
+    st.session_state.pop("confirmar_refinamento", None)
+    st.session_state.pop("refinamento_texto", None)
     st.session_state.pop("erro_decisao", None)
 
     resposta = st.session_state.get("prompt_enviado")
@@ -1610,6 +1621,41 @@ def limpar_decisao():
     aplicar_decisao(None)
 
 
+def pedir_confirmacao_refinamento():
+
+    # O texto digitado é guardado em uma chave própria, que não depende
+    # do campo estar na tela (o campo some durante a espera).
+    st.session_state.refinamento_texto = (
+        st.session_state.get("instrucoes_refinamento") or ""
+    )
+    st.session_state.confirmar_refinamento = True
+
+
+def cancelar_refinamento():
+
+    st.session_state.pop("confirmar_refinamento", None)
+
+
+def iniciar_refinamento():
+
+    resposta = st.session_state.get("prompt_enviado")
+
+    st.session_state.pop("confirmar_refinamento", None)
+
+    if not decisao_persistivel(resposta):
+        return
+
+    texto = st.session_state.get("refinamento_texto") or ""
+
+    st.session_state.pop("erro_refinamento", None)
+
+    st.session_state.refinamento_pedido = {
+        "projeto_id": resposta["projeto_id"],
+        "numero_versao": resposta.get("numero_versao"),
+        "instrucoes": texto.strip() or None,
+    }
+
+
 def pedir_confirmacao_novo_projeto():
 
     st.session_state.confirmar_novo_projeto = True
@@ -1626,6 +1672,7 @@ def iniciar_novo_projeto():
     st.session_state.pop("decisao_hitl", None)
     st.session_state.pop("confirmar_novo_projeto", None)
     st.session_state.pop("erro_decisao", None)
+    limpar_estado_refinamento()
 
 
 def mostrar_novo_projeto(decisao):
@@ -1662,7 +1709,7 @@ def mostrar_novo_projeto(decisao):
             st.button(
                 "Sim, descartar",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 on_click=iniciar_novo_projeto,
                 key="hitl_confirmar_novo"
             )
@@ -1670,7 +1717,7 @@ def mostrar_novo_projeto(decisao):
         with col2:
             st.button(
                 "Cancelar",
-                use_container_width=True,
+                width="stretch",
                 on_click=cancelar_novo_projeto,
                 key="hitl_cancelar_novo"
             )
@@ -1686,6 +1733,75 @@ def mostrar_novo_projeto(decisao):
             "Novo projeto",
             on_click=acao,
             key="hitl_novo_projeto"
+        )
+
+
+def mostrar_formulario_refinamento(persistivel):
+
+    if not persistivel:
+        st.warning(
+            "O refinamento não está disponível para esta tela: ele parte "
+            "de um resultado completo salvo no histórico."
+        )
+        return
+
+    confirmando = bool(st.session_state.get("confirmar_refinamento"))
+
+    st.text_area(
+        "Instruções de refinamento (opcional)",
+        value=st.session_state.get("refinamento_texto", ""),
+        key="instrucoes_refinamento",
+        height=130,
+        max_chars=4000,
+        disabled=confirmando,
+        placeholder=(
+            "Exemplo: Remova o uso de eval() e armazene as senhas com hash. "
+            "Deixe em branco para usar apenas o diagnóstico da IA Auditora."
+        )
+    )
+
+    st.caption(
+        "Sem instruções, a IA Desenvolvedora usa apenas o diagnóstico da "
+        "IA Auditora. Se houver conflito entre os dois, suas instruções "
+        "prevalecem."
+    )
+
+    if confirmando:
+
+        st.warning(
+            "Confirmar o envio? A IA Desenvolvedora vai gerar uma nova "
+            "versão e a IA Auditora vai auditá-la novamente. Isso consome "
+            "as duas APIs (Anthropic e OpenAI) e pode levar alguns minutos. "
+            "A versão atual continua salva. Enquanto o refinamento estiver "
+            "em andamento, a tela ficará bloqueada."
+        )
+
+        col1, col2, _ = st.columns([1, 1, 3])
+
+        with col1:
+            st.button(
+                "Sim, enviar",
+                type="primary",
+                width="stretch",
+                on_click=iniciar_refinamento,
+                key="ref_confirmar"
+            )
+
+        with col2:
+            st.button(
+                "Cancelar",
+                width="stretch",
+                on_click=cancelar_refinamento,
+                key="ref_cancelar"
+            )
+
+    else:
+
+        st.button(
+            "Enviar refinamento",
+            type="primary",
+            on_click=pedir_confirmacao_refinamento,
+            key="ref_enviar"
         )
 
 
@@ -1753,15 +1869,15 @@ def mostrar_decisao_hitl(resposta):
         elif decisao == "refinamento":
 
             st.info(
-                "Você solicitou o refinamento deste projeto. "
-                "A geração de uma nova versão ainda não está disponível: "
-                "será implementada na fase de refinamento."
+                "Você solicitou o refinamento deste projeto. Descreva abaixo "
+                "o que deseja melhorar e envie: a IA Desenvolvedora gerará "
+                "uma nova versão a partir desta, e a versão atual continuará "
+                "salva."
             )
 
-            st.caption(
-                nota_persistencia
-                + " Nenhuma nova geração foi iniciada."
-            )
+            mostrar_formulario_refinamento(persistivel)
+
+            st.caption(nota_persistencia)
 
             st.button(
                 "Alterar decisão",
@@ -1795,7 +1911,7 @@ def mostrar_decisao_hitl(resposta):
                 st.button(
                     "Aceitar resultado",
                     type="primary",
-                    use_container_width=True,
+                    width="stretch",
                     on_click=registrar_decisao,
                     args=("aceito",),
                     key="hitl_aceitar"
@@ -1804,7 +1920,7 @@ def mostrar_decisao_hitl(resposta):
             with col2:
                 st.button(
                     "Solicitar refinamento",
-                    use_container_width=True,
+                    width="stretch",
                     on_click=registrar_decisao,
                     args=("refinamento",),
                     key="hitl_refinar"
@@ -1886,6 +2002,7 @@ def abrir_projeto_historico(projeto_id: str):
     st.session_state.prompt_enviado = resposta
     st.session_state.pop("confirmar_novo_projeto", None)
     st.session_state.pop("erro_decisao", None)
+    limpar_estado_refinamento()
 
     decisao_salva = resposta.get("decisao")
 
@@ -2009,7 +2126,7 @@ def mostrar_historico():
                     on_click=abrir_projeto_historico,
                     args=(projeto["id"],),
                     disabled=not pode_abrir,
-                    use_container_width=True
+                    width="stretch"
                 )
 
 
@@ -2077,7 +2194,7 @@ def mostrar_area_geracao():
             gerar = st.button(
                 "Gerar projeto",
                 type="primary",
-                use_container_width=True
+                width="stretch"
             )
 
         if gerar:
@@ -2098,6 +2215,7 @@ def mostrar_area_geracao():
                         st.session_state.prompt_enviado = resposta
                         st.session_state.pop("decisao_hitl", None)
                         st.session_state.pop("confirmar_novo_projeto", None)
+                        limpar_estado_refinamento()
 
                         geracao_concluida = True
 
@@ -2105,6 +2223,7 @@ def mostrar_area_geracao():
                         st.session_state.prompt_enviado = None
                         st.session_state.pop("decisao_hitl", None)
                         st.session_state.pop("confirmar_novo_projeto", None)
+                        limpar_estado_refinamento()
                         st.error(
                             "Não foi possível concluir a comunicação com a API."
                         )
@@ -2145,10 +2264,22 @@ def mostrar_resultado(resposta):
         resposta.get("message", "Projeto gerado com sucesso!")
     )
 
+    erro_refinamento = st.session_state.pop("erro_refinamento", None)
+
+    if erro_refinamento:
+        st.error(erro_refinamento)
+
+    erro_versao = st.session_state.pop("erro_versao", None)
+
+    if erro_versao:
+        st.error(erro_versao)
+
     aviso = resposta.get("aviso")
 
     if isinstance(aviso, str) and aviso.strip():
         st.warning(aviso)
+
+    mostrar_info_versao(resposta)
 
     with st.expander("Visualizar descrição enviada"):
 
@@ -2169,6 +2300,642 @@ def mostrar_resultado(resposta):
 
 
 # ============================================================
+# COMPARAÇÃO ENTRE VERSÕES
+# ============================================================
+
+LIMITE_LINHAS_DIFF = 400
+
+
+def mapear_arquivos(arquivos):
+    """Converte a lista de arquivos de uma versão em {nome: conteúdo}."""
+
+    if not isinstance(arquivos, list):
+        return {}
+
+    return {
+        arquivo["nome"]: arquivo["conteudo"]
+        for arquivo in arquivos
+        if (
+            isinstance(arquivo, dict)
+            and isinstance(arquivo.get("nome"), str)
+            and isinstance(arquivo.get("conteudo"), str)
+        )
+    }
+
+
+def obter_arquivos(dados):
+
+    codigo = dados.get("codigo_gerado") if isinstance(dados, dict) else None
+
+    arquivos = codigo.get("arquivos") if isinstance(codigo, dict) else None
+
+    return arquivos if isinstance(arquivos, list) else []
+
+
+def comparar_arquivos(arquivos_base, arquivos_nova, numero_base, numero_nova):
+    """Compara os arquivos de duas versões.
+
+    Devolve uma lista, ordenada pelo nome do arquivo, com a situação de
+    cada um, as linhas adicionadas e removidas e o diff.
+    """
+    base = mapear_arquivos(arquivos_base)
+    nova = mapear_arquivos(arquivos_nova)
+
+    diferencas = []
+
+    for nome in sorted(set(base) | set(nova)):
+
+        linhas_base = base.get(nome, "").splitlines()
+        linhas_nova = nova.get(nome, "").splitlines()
+
+        if nome not in base:
+            situacao = "Adicionado"
+        elif nome not in nova:
+            situacao = "Removido"
+        elif linhas_base != linhas_nova:
+            situacao = "Alterado"
+        else:
+            situacao = "Inalterado"
+
+        diff = []
+
+        if situacao != "Inalterado":
+            diff = list(
+                difflib.unified_diff(
+                    linhas_base,
+                    linhas_nova,
+                    fromfile=(
+                        f"v{numero_base}/{nome}"
+                        if nome in base
+                        else "(não existe)"
+                    ),
+                    tofile=(
+                        f"v{numero_nova}/{nome}"
+                        if nome in nova
+                        else "(não existe)"
+                    ),
+                    lineterm=""
+                )
+            )
+
+        # As duas primeiras linhas do diff são o cabeçalho (--- e +++).
+        corpo = diff[2:]
+
+        diferencas.append({
+            "nome": nome,
+            "situacao": situacao,
+            "adicionadas": sum(1 for linha in corpo if linha.startswith("+")),
+            "removidas": sum(1 for linha in corpo if linha.startswith("-")),
+            "diff": diff,
+        })
+
+    return diferencas
+
+
+def indicadores_diagnostico(diagnostico):
+    """Contagens de um diagnóstico (None quando indisponíveis)."""
+
+    indicadores = {"Problemas identificados": None}
+
+    for _, _, rotulo in sorted(SEVERIDADES_DIAGNOSTICO.values()):
+        indicadores[f"Problemas · {rotulo}"] = None
+
+    indicadores["Melhorias sugeridas"] = None
+
+    if not isinstance(diagnostico, dict):
+        return indicadores
+
+    problemas = diagnostico.get("problemas_identificados")
+
+    if isinstance(problemas, list):
+
+        validos = [p for p in problemas if isinstance(p, dict)]
+
+        indicadores["Problemas identificados"] = len(validos)
+
+        for chave, (_, _, rotulo) in SEVERIDADES_DIAGNOSTICO.items():
+            indicadores[f"Problemas · {rotulo}"] = sum(
+                1 for p in validos if p.get("severidade") == chave
+            )
+
+    melhorias = diagnostico.get("melhorias_sugeridas")
+
+    if isinstance(melhorias, list):
+        indicadores["Melhorias sugeridas"] = sum(
+            1 for melhoria in melhorias if isinstance(melhoria, dict)
+        )
+
+    return indicadores
+
+
+def texto_status(diagnostico):
+
+    if not isinstance(diagnostico, dict):
+        return "Indisponível"
+
+    return STATUS_DIAGNOSTICO.get(
+        diagnostico.get("status"),
+        ("Indisponível", "#64748B")
+    )[0]
+
+
+def formatar_valor(valor):
+
+    return "—" if valor is None else str(valor)
+
+
+def formatar_variacao(valor_base, valor_nova):
+
+    if valor_base is None or valor_nova is None:
+        return "—"
+
+    diferenca = valor_nova - valor_base
+
+    if diferenca > 0:
+        return f"+{diferenca}"
+
+    return str(diferenca)
+
+
+def montar_tabela_resumo(base, nova, numero_base, numero_nova):
+    """Linhas da tabela de resumo. Todos os valores são texto."""
+
+    coluna_base = f"Versão {numero_base}"
+    coluna_nova = f"Versão {numero_nova}"
+
+    linhas = [{
+        "Indicador": "Status da auditoria",
+        coluna_base: texto_status(base.get("diagnostico")),
+        coluna_nova: texto_status(nova.get("diagnostico")),
+        "Variação": "—",
+    }]
+
+    indicadores_base = indicadores_diagnostico(base.get("diagnostico"))
+    indicadores_nova = indicadores_diagnostico(nova.get("diagnostico"))
+
+    for rotulo in indicadores_base:
+        linhas.append({
+            "Indicador": rotulo,
+            coluna_base: formatar_valor(indicadores_base[rotulo]),
+            coluna_nova: formatar_valor(indicadores_nova[rotulo]),
+            "Variação": formatar_variacao(
+                indicadores_base[rotulo],
+                indicadores_nova[rotulo]
+            ),
+        })
+
+    arquivos_base = len(mapear_arquivos(obter_arquivos(base)))
+    arquivos_nova = len(mapear_arquivos(obter_arquivos(nova)))
+
+    linhas.append({
+        "Indicador": "Arquivos",
+        coluna_base: str(arquivos_base),
+        coluna_nova: str(arquivos_nova),
+        "Variação": formatar_variacao(arquivos_base, arquivos_nova),
+    })
+
+    return linhas
+
+
+def mostrar_comparacao_versoes(resposta: dict):
+
+    projeto_id = resposta.get("projeto_id")
+    numero_atual = resposta.get("numero_versao")
+
+    versoes = [
+        versao
+        for versao in (resposta.get("versoes") or [])
+        if (
+            isinstance(versao, dict)
+            and isinstance(versao.get("numero"), int)
+            and not isinstance(versao.get("numero"), bool)
+        )
+    ]
+
+    if not isinstance(projeto_id, str) or len(versoes) < 2:
+        return
+
+    numeros = [versao["numero"] for versao in versoes]
+
+    if numero_atual not in numeros:
+        return
+
+    por_numero = {versao["numero"]: versao for versao in versoes}
+
+    ativo = st.toggle(
+        "Comparar versões",
+        key=f"comparar_ativo_{projeto_id}"
+    )
+
+    if not ativo:
+        return
+
+    # Padrão: comparar a versão aberta com a versão de que ela partiu.
+    origem = por_numero[numero_atual].get("origem")
+
+    if origem in numeros and origem != numero_atual:
+        padrao_base = origem
+
+    else:
+        outros = [numero for numero in numeros if numero != numero_atual]
+        anteriores = [numero for numero in outros if numero < numero_atual]
+        padrao_base = max(anteriores) if anteriores else min(outros)
+
+    coluna_base, coluna_nova, _ = st.columns([2, 2, 1])
+
+    with coluna_base:
+
+        numero_base = st.selectbox(
+            "Versão base",
+            numeros,
+            index=numeros.index(padrao_base),
+            key=f"comparar_base_{projeto_id}_{numero_atual}",
+            format_func=lambda numero: rotulo_versao(por_numero[numero])
+        )
+
+    with coluna_nova:
+
+        numero_nova = st.selectbox(
+            "Versão comparada",
+            numeros,
+            index=numeros.index(numero_atual),
+            key=f"comparar_nova_{projeto_id}_{numero_atual}",
+            format_func=lambda numero: rotulo_versao(por_numero[numero])
+        )
+
+    if numero_base == numero_nova:
+        st.info("Escolha duas versões diferentes para comparar.")
+        return
+
+    base = carregar_projeto_historico(projeto_id, numero_base)
+    nova = carregar_projeto_historico(projeto_id, numero_nova)
+
+    for dados in (base, nova):
+
+        if not isinstance(dados, dict) or "error" in dados:
+
+            mensagem = (
+                dados.get("error")
+                if isinstance(dados, dict)
+                else None
+            )
+
+            st.error(
+                "Não foi possível carregar as versões para a comparação: "
+                + (
+                    mensagem
+                    if isinstance(mensagem, str)
+                    else "erro desconhecido."
+                )
+            )
+
+            return
+
+    with st.container(border=True):
+
+        st.markdown(
+            f"**Comparando a versão {numero_base} "
+            f"com a versão {numero_nova}**"
+        )
+
+        if (
+            base.get("estado") != "completa"
+            or nova.get("estado") != "completa"
+        ):
+            st.warning(
+                "Uma das versões não possui resultado completo: o "
+                "diagnóstico dela não pode ser comparado. Apenas o código "
+                "é comparado."
+            )
+
+        st.markdown("**Resumo da auditoria**")
+
+        st.dataframe(
+            montar_tabela_resumo(base, nova, numero_base, numero_nova),
+            hide_index=True,
+            width="stretch"
+        )
+
+        st.caption(
+            "Variação: versão comparada menos versão base. São comparadas "
+            "as contagens, e não os problemas individuais, porque a IA "
+            "Auditora descreve o mesmo problema com palavras diferentes a "
+            "cada auditoria."
+        )
+
+        diferencas = comparar_arquivos(
+            obter_arquivos(base),
+            obter_arquivos(nova),
+            numero_base,
+            numero_nova
+        )
+
+        st.markdown("**Arquivos**")
+
+        if not diferencas:
+            st.info("Nenhuma das versões possui arquivos válidos.")
+            return
+
+        st.dataframe(
+            [
+                {
+                    "Arquivo": diferenca["nome"],
+                    "Situação": diferenca["situacao"],
+                    "Linhas adicionadas": diferenca["adicionadas"],
+                    "Linhas removidas": diferenca["removidas"],
+                }
+                for diferenca in diferencas
+            ],
+            hide_index=True,
+            width="stretch"
+        )
+
+        instrucoes = nova.get("instrucoes")
+
+        if isinstance(instrucoes, str) and instrucoes.strip():
+
+            with st.expander(
+                f"Instruções usadas na versão {numero_nova}"
+            ):
+                st.code(instrucoes, language="text", wrap_lines=True)
+
+        modificados = [
+            diferenca
+            for diferenca in diferencas
+            if diferenca["situacao"] != "Inalterado"
+        ]
+
+        if not modificados:
+            st.info("Os arquivos das duas versões são idênticos.")
+            return
+
+        st.markdown("**Diferença do código**")
+
+        st.caption(
+            f"Linhas adicionadas (+) e removidas (-) em relação à "
+            f"versão {numero_base}."
+        )
+
+        for diferenca in modificados:
+
+            rotulo = (
+                f"{diferenca['situacao']} · {diferenca['nome']} "
+                f"(+{diferenca['adicionadas']} -{diferenca['removidas']})"
+            )
+
+            with st.expander(rotulo):
+
+                diff = diferenca["diff"]
+
+                if not diff:
+                    st.caption("Arquivo sem conteúdo para comparar.")
+                    continue
+
+                st.code(
+                    "\n".join(diff[:LIMITE_LINHAS_DIFF]),
+                    language="diff"
+                )
+
+                if len(diff) > LIMITE_LINHAS_DIFF:
+                    st.caption(
+                        f"Mostrando as primeiras {LIMITE_LINHAS_DIFF} "
+                        f"linhas de {len(diff)}."
+                    )
+
+
+# ============================================================
+# REFINAMENTO
+# ============================================================
+
+def rotulo_versao(versao: dict):
+
+    texto = f"Versão {versao['numero']}"
+
+    if versao.get("estado") == "completa":
+
+        status_texto = STATUS_DIAGNOSTICO.get(
+            versao.get("status_auditoria"),
+            ("Sem status", "#64748B")
+        )[0]
+
+        texto += f" · {status_texto}"
+
+    else:
+        texto += " · incompleta"
+
+    origem = versao.get("origem")
+
+    if isinstance(origem, int) and not isinstance(origem, bool):
+        texto += f" · a partir da v{origem}"
+
+    return texto
+
+
+def trocar_versao(projeto_id: str, chave: str):
+
+    numero = st.session_state.get(chave)
+
+    resposta = carregar_projeto_historico(projeto_id, numero)
+
+    if not isinstance(resposta, dict) or "error" in resposta:
+
+        mensagem = (
+            resposta.get("error")
+            if isinstance(resposta, dict)
+            else None
+        )
+
+        st.session_state.erro_versao = (
+            "Não foi possível abrir a versão: "
+            + (
+                mensagem
+                if isinstance(mensagem, str)
+                else "erro desconhecido."
+            )
+        )
+
+        # Remove a escolha do seletor: ele é recriado na versão que
+        # continua em exibição.
+        st.session_state.pop(chave, None)
+
+        return
+
+    st.session_state.prompt_enviado = resposta
+    st.session_state.pop("confirmar_novo_projeto", None)
+    st.session_state.pop("erro_decisao", None)
+    st.session_state.pop("arquivo_selecionado", None)
+    st.session_state.pop("ferramentas_arquivo", None)
+    limpar_estado_refinamento()
+
+    decisao_salva = resposta.get("decisao")
+
+    if decisao_salva in ("aceito", "refinamento"):
+        st.session_state.decisao_hitl = decisao_salva
+    else:
+        st.session_state.pop("decisao_hitl", None)
+
+
+def mostrar_seletor_versoes(resposta: dict):
+
+    projeto_id = resposta.get("projeto_id")
+    numero_atual = resposta.get("numero_versao")
+
+    versoes = [
+        versao
+        for versao in (resposta.get("versoes") or [])
+        if (
+            isinstance(versao, dict)
+            and isinstance(versao.get("numero"), int)
+            and not isinstance(versao.get("numero"), bool)
+        )
+    ]
+
+    if not isinstance(projeto_id, str) or len(versoes) < 2:
+        return
+
+    numeros = [versao["numero"] for versao in versoes]
+
+    if numero_atual not in numeros:
+        return
+
+    por_numero = {versao["numero"]: versao for versao in versoes}
+
+    # A chave inclui a versão em exibição: quando a versão muda, o
+    # seletor é recriado já apontando para ela.
+    chave = f"seletor_versao_{projeto_id}_{numero_atual}"
+
+    coluna, _ = st.columns([2, 3])
+
+    with coluna:
+
+        st.selectbox(
+            "Versão do projeto",
+            numeros,
+            index=numeros.index(numero_atual),
+            key=chave,
+            format_func=lambda numero: rotulo_versao(por_numero[numero]),
+            on_change=trocar_versao,
+            args=(projeto_id, chave)
+        )
+
+
+def mostrar_info_versao(resposta: dict):
+
+    mostrar_seletor_versoes(resposta)
+
+    mostrar_comparacao_versoes(resposta)
+
+    numero = resposta.get("numero_versao")
+
+    if not isinstance(numero, int) or isinstance(numero, bool):
+        return
+
+    origem = resposta.get("versao_origem")
+
+    if isinstance(origem, int) and not isinstance(origem, bool):
+        st.caption(f"Versão {numero} · gerada a partir da versão {origem}")
+    else:
+        st.caption(f"Versão {numero} · geração original")
+
+    instrucoes = resposta.get("instrucoes")
+
+    if isinstance(instrucoes, str) and instrucoes.strip():
+
+        with st.expander("Instruções usadas neste refinamento"):
+
+            st.code(
+                instrucoes,
+                language="text",
+                wrap_lines=True
+            )
+
+
+def executar_refinamento_pendente():
+    """Tela de espera: executa o refinamento solicitado e volta ao projeto."""
+
+    # O pedido é retirado antes da chamada, para que uma reinicialização
+    # da tela não envie o mesmo refinamento duas vezes.
+    pedido = st.session_state.pop("refinamento_pedido", None)
+
+    if not isinstance(pedido, dict) or not isinstance(
+        pedido.get("projeto_id"), str
+    ):
+        st.rerun()
+
+    numero_origem = pedido.get("numero_versao")
+    instrucoes = pedido.get("instrucoes")
+
+    st.markdown(
+        """
+        <div class="section-number">REFINAMENTO</div>
+        <div class="section-heading">Gerando a nova versão</div>
+        <div class="section-description">
+            A IA Desenvolvedora está refinando o projeto e a IA Auditora
+            vai auditá-lo novamente. Isso pode levar alguns minutos.
+            Não feche nem recarregue esta página.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    with st.container(border=True):
+
+        if isinstance(numero_origem, int) and not isinstance(numero_origem, bool):
+            st.markdown(f"Refinando a **versão {numero_origem}** do projeto.")
+
+        if instrucoes:
+            st.caption("Com as instruções informadas pelo usuário.")
+        else:
+            st.caption(
+                "Sem instruções do usuário: será usado apenas o "
+                "diagnóstico da IA Auditora."
+            )
+
+        with st.spinner(
+            "A nova versão está sendo gerada, analisada e auditada..."
+        ):
+            resposta = refinar_projeto_historico(
+                pedido["projeto_id"],
+                numero_origem,
+                instrucoes
+            )
+
+    st.session_state.pop("confirmar_refinamento", None)
+
+    if (
+        not isinstance(resposta, dict)
+        or "error" in resposta
+        or not projeto_gerado_valido(resposta)
+    ):
+
+        mensagem = (
+            resposta.get("error")
+            if isinstance(resposta, dict)
+            else None
+        )
+
+        st.session_state.erro_refinamento = (
+            "O refinamento não foi concluído: "
+            + (
+                mensagem
+                if isinstance(mensagem, str)
+                else "a API devolveu uma resposta inválida."
+            )
+        )
+
+        # O texto das instruções continua guardado em "refinamento_texto",
+        # e o campo o recupera na próxima tentativa.
+
+    else:
+
+        st.session_state.prompt_enviado = resposta
+        st.session_state.pop("decisao_hitl", None)
+        limpar_estado_refinamento()
+
+    st.rerun()
+
+
+# ============================================================
 # INTERFACE PRINCIPAL
 # ============================================================
 
@@ -2177,6 +2944,10 @@ def mostrar_interface():
     configurar_pagina()
 
     mostrar_cabecalho()
+
+    if st.session_state.get("refinamento_pedido"):
+        executar_refinamento_pendente()
+        return
 
     resposta = mostrar_area_geracao()
 

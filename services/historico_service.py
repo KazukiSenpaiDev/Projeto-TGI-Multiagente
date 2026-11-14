@@ -84,6 +84,49 @@ def _obter_versoes(registro: dict) -> list:
     ]
 
 
+def _versao_padrao(versoes: list) -> dict:
+    """Versão exibida por padrão: a completa mais recente.
+
+    Se nenhuma estiver completa, a mais recente. Assim, um refinamento
+    em andamento (ou que falhou) não esconde a última versão utilizável.
+    """
+    completas = [
+        versao
+        for versao in versoes
+        if versao.get("estado") == "completa"
+    ]
+
+    return max(completas or versoes, key=lambda versao: versao["numero"])
+
+
+def _resumir_versoes(versoes: list) -> list:
+    """Resumo de cada versão, em ordem crescente, para o seletor de versões."""
+    resumo = []
+
+    for versao in sorted(versoes, key=lambda item: item["numero"]):
+
+        origem = versao.get("origem")
+        status = versao.get("status_auditoria")
+        data_hora = versao.get("data_hora")
+
+        resumo.append({
+            "numero": versao["numero"],
+            "estado": (
+                "completa"
+                if versao.get("estado") == "completa"
+                else "incompleta"
+            ),
+            "status_auditoria": status if isinstance(status, str) else None,
+            "origem": (
+                origem
+                if isinstance(origem, int) and not isinstance(origem, bool)
+                else None
+            ),
+            "data_hora": data_hora if isinstance(data_hora, str) else None,
+        })
+
+    return resumo
+
 def _resumir_projeto(pasta: Path) -> dict:
     """Cria o resumo de um projeto para a lista, sem nunca levantar erro."""
     resumo = {
@@ -92,6 +135,7 @@ def _resumir_projeto(pasta: Path) -> dict:
         "data_hora": None,
         "estado": "invalido",
         "status_auditoria": None,
+        "numero_versao": None,
         "total_versoes": 0,
         "aviso": None,
     }
@@ -142,11 +186,12 @@ def _resumir_projeto(pasta: Path) -> dict:
         resumo["aviso"] = "O registro do projeto não possui versões."
         return resumo
 
-    ultima = max(versoes, key=lambda versao: versao["numero"])
+    padrao = _versao_padrao(versoes)
+    resumo["numero_versao"] = padrao["numero"]
 
-    if ultima.get("estado") == "completa":
+    if padrao.get("estado") == "completa":
         resumo["estado"] = "completa"
-        resumo["status_auditoria"] = ultima.get("status_auditoria")
+        resumo["status_auditoria"] = padrao.get("status_auditoria")
     else:
         resumo["estado"] = "incompleta"
         resumo["aviso"] = (
@@ -245,9 +290,9 @@ def _abrir_registro(projeto_id: str):
 
 
 def _selecionar_versao(versoes: list, numero_versao):
-    """Escolhe a versão pedida ou, se nenhuma for pedida, a mais recente."""
+    """Escolhe a versão pedida ou, se nenhuma for pedida, a padrão."""
     if numero_versao is None:
-        return max(versoes, key=lambda versao: versao["numero"])
+        return _versao_padrao(versoes)
 
     entrada = next(
         (
@@ -269,6 +314,8 @@ def _selecionar_versao(versoes: list, numero_versao):
 def carregar_projeto(projeto_id: str, numero_versao: int = None) -> dict:
     """Carrega uma versão de um projeto no formato usado pelo dashboard.
 
+    Sem número de versão, carrega a versão completa mais recente.
+
     Levanta:
       ValueError            - identificador inválido.
       FileNotFoundError     - projeto inexistente.
@@ -284,6 +331,9 @@ def carregar_projeto(projeto_id: str, numero_versao: int = None) -> dict:
 
     prompt = registro.get("prompt")
 
+    versao_origem = entrada.get("origem")
+    instrucoes = entrada.get("instrucoes")
+
     resposta = {
         "message": "Projeto carregado do histórico.",
         "Prompt_recebido": prompt if isinstance(prompt, str) else "",
@@ -294,6 +344,14 @@ def carregar_projeto(projeto_id: str, numero_versao: int = None) -> dict:
         "decisao_data_hora": None,
         "projeto_id": projeto_id,
         "numero_versao": numero,
+        "versao_origem": (
+            versao_origem
+            if isinstance(versao_origem, int)
+            and not isinstance(versao_origem, bool)
+            else None
+        ),
+        "instrucoes": instrucoes if isinstance(instrucoes, str) else None,
+        "versoes": _resumir_versoes(versoes),
         "estado": "incompleta",
         "aviso": None,
     }

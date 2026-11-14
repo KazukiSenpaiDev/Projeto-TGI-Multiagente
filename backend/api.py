@@ -22,6 +22,10 @@ from services.historico_service import (
     listar_projetos,
     registrar_decisao
 )
+from services.refinamento_service import (
+    RefinamentoEmAndamentoError,
+    refinar_projeto
+)
 
 app = FastAPI()
 
@@ -36,6 +40,11 @@ class DecisaoRequest(BaseModel):
     # Sem valor padrão: o campo é obrigatório, e "null" remove a decisão.
     decisao: Literal["aceito", "refinamento"] | None
     versao: int | None = None
+
+
+class RefinamentoRequest(BaseModel):
+    versao: int | None = None
+    instrucoes: str | None = Field(default=None, max_length=4000)
 
 
 
@@ -164,4 +173,51 @@ def registrar_decisao_projeto(projeto_id: str, dados: DecisaoRequest):
         raise HTTPException(
             status_code=500,
             detail="Não foi possível gravar a decisão."
+        ) from erro
+
+
+@app.post("/projetos/{projeto_id}/refinar")
+def refinar_projeto_historico(projeto_id: str, dados: RefinamentoRequest):
+    # A ordem dos "except" importa:
+    #   FileNotFoundError é um tipo de OSError;
+    #   ProjetoInvalidoError é um tipo de ValueError;
+    #   RuntimeError (falhas do Claude, da análise e da auditoria)
+    #   precisa vir antes do ValueError genérico (identificador inválido).
+    try:
+        return refinar_projeto(projeto_id, dados.versao, dados.instrucoes)
+
+    except FileNotFoundError as erro:
+        raise HTTPException(
+            status_code=404,
+            detail="Projeto não encontrado."
+        ) from erro
+
+    except RefinamentoEmAndamentoError as erro:
+        raise HTTPException(
+            status_code=409,
+            detail=str(erro)
+        ) from erro
+
+    except ProjetoInvalidoError as erro:
+        raise HTTPException(
+            status_code=422,
+            detail=str(erro)
+        ) from erro
+
+    except RuntimeError as erro:
+        raise HTTPException(
+            status_code=502,
+            detail=str(erro)
+        ) from erro
+
+    except ValueError as erro:
+        raise HTTPException(
+            status_code=400,
+            detail="Identificador de projeto inválido."
+        ) from erro
+
+    except OSError as erro:
+        raise HTTPException(
+            status_code=500,
+            detail="Não foi possível gravar a nova versão do projeto."
         ) from erro

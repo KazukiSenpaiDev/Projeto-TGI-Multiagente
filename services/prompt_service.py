@@ -3,6 +3,9 @@ import requests
 BASE_URL = "http://127.0.0.1:8000"
 API_URL = f"{BASE_URL}/gerar"
 
+# O refinamento faz geração, análise e auditoria numa só chamada.
+TIMEOUT_REFINAMENTO = 300
+
 
 def receber_prompt(prompt):
     try:
@@ -52,23 +55,26 @@ def _extrair_detalhe(resposta, padrao):
     return detalhe if isinstance(detalhe, str) else padrao
 
 
-def _chamar_historico(metodo, caminho, parametros=None, corpo=None):
+def _chamar_historico(
+    metodo,
+    caminho,
+    parametros=None,
+    corpo=None,
+    timeout=30,
+    erro_padrao="A API retornou um erro ao consultar o histórico.",
+    mensagem_timeout="A API demorou muito para responder.",
+):
     try:
         resposta = requests.request(
             metodo,
             f"{BASE_URL}{caminho}",
             params=parametros,
             json=corpo,
-            timeout=30,
+            timeout=timeout,
         )
 
         if not resposta.ok:
-            return {
-                "error": _extrair_detalhe(
-                    resposta,
-                    "A API retornou um erro ao consultar o histórico."
-                )
-            }
+            return {"error": _extrair_detalhe(resposta, erro_padrao)}
 
         try:
             return resposta.json()
@@ -78,7 +84,7 @@ def _chamar_historico(metodo, caminho, parametros=None, corpo=None):
             }
 
     except requests.exceptions.Timeout:
-        return {"error": "A API demorou muito para responder."}
+        return {"error": mensagem_timeout}
 
     except requests.exceptions.ConnectionError:
         return {"error": "Não foi possível conectar à API."}
@@ -123,4 +129,28 @@ def registrar_decisao_historico(projeto_id, decisao, numero_versao=None):
         "PUT",
         f"/projetos/{projeto_id}/decisao",
         corpo=corpo
+    )
+
+
+def refinar_projeto_historico(projeto_id, numero_versao=None, instrucoes=None):
+    """Pede uma nova versão do projeto. Devolve a versão ou {"error": "..."}."""
+    corpo = {}
+
+    if numero_versao is not None:
+        corpo["versao"] = numero_versao
+
+    if isinstance(instrucoes, str) and instrucoes.strip():
+        corpo["instrucoes"] = instrucoes
+
+    return _chamar_historico(
+        "POST",
+        f"/projetos/{projeto_id}/refinar",
+        corpo=corpo,
+        timeout=TIMEOUT_REFINAMENTO,
+        erro_padrao="A API retornou um erro ao refinar o projeto.",
+        mensagem_timeout=(
+            "O refinamento demorou mais que o esperado e pode ainda estar "
+            "em andamento na API. Aguarde alguns minutos e consulte a "
+            "lista de projetos anteriores."
+        ),
     )
